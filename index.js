@@ -1,7 +1,7 @@
 require('dotenv').config();
 const express  = require('express');
 const cors     = require('cors');
-const InstaSend = require('instasend-node');
+const IntaSend = require('intasend-node');
 const { createClient } = require('@supabase/supabase-js');
 
 const app = express();
@@ -13,7 +13,7 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_KEY
 );
 
-const client = new InstaSend(
+const client = new IntaSend(
   process.env.INSTASEND_API_TOKEN,
   process.env.INSTASEND_PUBLISHABLE_KEY,
   'TEST' // change to 'PRODUCTION' when you go live

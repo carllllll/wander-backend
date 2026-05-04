@@ -8,10 +8,13 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
+
+console.log('URL:', supabaseUrl);
+console.log('KEY:', supabaseKey ? 'found' : 'MISSING');
+
+const supabase = createClient(supabaseUrl, supabaseKey);
 
 const client = new IntaSend(
   process.env.INSTASEND_API_TOKEN,

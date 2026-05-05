@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express  = require('express');
 const cors     = require('cors');
+const axios    = require('axios');
 const IntaSend = require('intasend-node');
 const { createClient } = require('@supabase/supabase-js');
 
@@ -74,6 +75,7 @@ app.get('/bookings', async (req, res) => {
 app.post('/bookings', async (req, res) => {
   const { trip_id, name, email, phone, count, notes, payment_method } = req.body;
 
+  // 1. Get the trip
   const { data: trip, error: tripErr } = await supabase
     .from('trips')
     .select('*')
@@ -82,9 +84,11 @@ app.post('/bookings', async (req, res) => {
 
   if (tripErr || !trip) return res.status(404).json({ error: 'Trip not found' });
 
+  // 2. Check availability
   const avail = trip.spots - (trip.booked || 0);
   if (count > avail) return res.status(400).json({ error: `Only ${avail} spot(s) left` });
 
+  // 3. Save booking as pending
   const { data: booking, error: bookErr } = await supabase
     .from('bookings')
     .insert([{
@@ -100,11 +104,13 @@ app.post('/bookings', async (req, res) => {
 
   if (bookErr) return res.status(500).json({ error: bookErr.message });
 
+  // 4. Initiate payment
   try {
     const collection = intasend.collection();
     let paymentResponse;
 
     if (payment_method === 'mpesa') {
+      // M-Pesa STK Push via SDK
       paymentResponse = await collection.mpesaStkPush({
         first_name:   name.split(' ')[0],
         last_name:    name.split(' ')[1] || '',
@@ -114,26 +120,34 @@ app.post('/bookings', async (req, res) => {
         phone_number: phone,
         api_ref:      booking.id
       });
- } else {
-  paymentResponse = await collection.create({
-    first_name:   name.split(' ')[0],
-    last_name:    name.split(' ')[1] || '',
-    email:        email,
-    host:         'https://wander-backend-p970.onrender.com',
-    amount:       trip.price * count,
-    currency:     'KES',
-    api_ref:      booking.id
-  });
-}
+    } else {
+      // Card — direct REST call to IntaSend
+      const checkoutRes = await axios.post(
+        'https://sandbox.intasend.com/api/v1/checkout/',
+        {
+          public_key:   process.env.INSTASEND_PUBLISHABLE_KEY,
+          amount:       trip.price * count,
+          currency:     'KES',
+          email:        email,
+          first_name:   name.split(' ')[0],
+          last_name:    name.split(' ')[1] || '',
+          api_ref:      booking.id,
+          redirect_url: 'https://your-site.netlify.app' // ← update this to your site URL
+        }
+      );
+      paymentResponse = checkoutRes.data;
+    }
 
-const invoiceId = paymentResponse?.invoice?.invoice_id || paymentResponse?.id;
-const paymentUrl = paymentResponse?.url || paymentResponse?.checkout_url || paymentResponse?.payment_link || null;
+    // 5. Save payment reference
+    const invoiceId = paymentResponse?.invoice?.invoice_id || paymentResponse?.id;
+    const paymentUrl = paymentResponse?.url || null;
 
     await supabase
       .from('bookings')
       .update({ payment_ref: invoiceId })
       .eq('id', booking.id);
 
+    // 6. Return to frontend
     res.json({
       booking_id:  booking.id,
       payment_url: paymentUrl,
@@ -144,9 +158,11 @@ const paymentUrl = paymentResponse?.url || paymentResponse?.checkout_url || paym
     console.error('Instasend error:', err);
     res.status(500).json({ error: 'Payment initiation failed', detail: err.message });
   }
-}); // ← this was missing
+});
 
 // ─── WEBHOOK ─────────────────────────────────────────
+// Register this URL in IntaSend dashboard → Settings → Webhooks:
+// https://wander-backend-p970.onrender.com/webhook/instasend
 
 app.post('/webhook/instasend', async (req, res) => {
   console.log('Webhook received:', req.body);

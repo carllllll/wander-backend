@@ -16,10 +16,11 @@ console.log('KEY:', supabaseKey ? 'found' : 'MISSING');
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const client = new IntaSend(
-  process.env.INSTASEND_API_TOKEN,
-  process.env.INSTASEND_PUBLISHABLE_KEY,
-  'TEST' // change to 'PRODUCTION' when you go live
+const IntaSend = require('intasend-node');
+const intasend = new IntaSend(
+  process.env.INSTASEND_PUBLISHABLE_KEY, // publishable key FIRST
+  process.env.INSTASEND_API_TOKEN,       // secret key SECOND
+  true  // true = test/sandbox, false = live
 );
 
 // ─── TRIPS ───────────────────────────────────────────
@@ -111,54 +112,51 @@ app.post('/bookings', async (req, res) => {
   if (bookErr) return res.status(500).json({ error: bookErr.message });
 
   // 3. Initiate payment
-  try {
-    let paymentResponse;
+ try {
+  const collection = intasend.collection();
+  
+  let paymentResponse;
 
-    if (payment_method === 'mpesa') {
-      // M-Pesa STK push
-      paymentResponse = await client.PaymentLinks.create({
-        currency:     'KES',
-        amount:       trip.price * count,
-        title:        trip.name,
-        first_name:   name.split(' ')[0],
-        last_name:    name.split(' ')[1] || '',
-        email:        email,
-        phone_number: phone,
-        comment:      `Booking ref: ${booking.id}`
-      });
-    } else {
-      // Card payment link
-      paymentResponse = await client.PaymentLinks.create({
-        currency:   'KES',
-        amount:     trip.price * count,
-        title:      trip.name,
-        first_name: name.split(' ')[0],
-        last_name:  name.split(' ')[1] || '',
-        email:      email,
-        comment:    `Booking ref: ${booking.id}`
-      });
-    }
-
-    // 4. Save payment reference against booking
-    const invoiceId = paymentResponse?.id || paymentResponse?.invoice?.invoice_id;
-
-    await supabase
-      .from('bookings')
-      .update({ payment_ref: invoiceId })
-      .eq('id', booking.id);
-
-    res.json({
-      booking_id:  booking.id,
-      payment_url: paymentResponse?.url || paymentResponse?.checkout_url || null,
-      invoice_id:  invoiceId
+  if (payment_method === 'mpesa') {
+    paymentResponse = await collection.mpesaStkPush({
+      first_name:   name.split(' ')[0],
+      last_name:    name.split(' ')[1] || '',
+      email:        email,
+      host:         'https://wander-backend-p970.onrender.com',
+      amount:       trip.price * count,
+      phone_number: phone,
+      api_ref:      booking.id
     });
-
-  } catch (err) {
-    console.error('Instasend error:', err);
-    res.status(500).json({ error: 'Payment initiation failed', detail: err.message });
+  } else {
+    paymentResponse = await collection.checkoutLinkCreate({
+      first_name:   name.split(' ')[0],
+      last_name:    name.split(' ')[1] || '',
+      email:        email,
+      host:         'https://wander-backend-p970.onrender.com',
+      amount:       trip.price * count,
+      currency:     'KES',
+      api_ref:      booking.id
+    });
   }
-});
 
+  const invoiceId = paymentResponse?.invoice?.invoice_id || paymentResponse?.id;
+  const paymentUrl = paymentResponse?.url || paymentResponse?.checkout_url || null;
+
+  await supabase
+    .from('bookings')
+    .update({ payment_ref: invoiceId })
+    .eq('id', booking.id);
+
+  res.json({
+    booking_id:  booking.id,
+    payment_url: paymentUrl,
+    invoice_id:  invoiceId
+  });
+
+} catch (err) {
+  console.error('Instasend error:', err);
+  res.status(500).json({ error: 'Payment initiation failed', detail: err.message });
+}
 // ─── INSTASEND WEBHOOK ───────────────────────────────
 // Add this URL in Instasend dashboard → Settings → Webhooks:
 // https://your-railway-url/webhook/instasend

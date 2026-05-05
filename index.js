@@ -8,18 +8,15 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_KEY;
-
-console.log('URL:', supabaseUrl);
-console.log('KEY:', supabaseKey ? 'found' : 'MISSING');
-
-const supabase = createClient(supabaseUrl, supabaseKey);
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY
+);
 
 const intasend = new IntaSend(
-  process.env.INSTASEND_PUBLISHABLE_KEY, // publishable key FIRST
-  process.env.INSTASEND_API_TOKEN,       // secret key SECOND
-  true  // true = test/sandbox, false = live
+  process.env.INSTASEND_PUBLISHABLE_KEY,
+  process.env.INSTASEND_API_TOKEN,
+  true // true = sandbox, false = live
 );
 
 // ─── TRIPS ───────────────────────────────────────────
@@ -29,7 +26,6 @@ app.get('/trips', async (req, res) => {
     .from('trips')
     .select('*')
     .order('start_date', { ascending: true });
-
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -40,7 +36,6 @@ app.post('/trips', async (req, res) => {
     .insert([req.body])
     .select()
     .single();
-
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -52,7 +47,6 @@ app.put('/trips/:id', async (req, res) => {
     .eq('id', req.params.id)
     .select()
     .single();
-
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -62,7 +56,6 @@ app.delete('/trips/:id', async (req, res) => {
     .from('trips')
     .delete()
     .eq('id', req.params.id);
-
   if (error) return res.status(500).json({ error: error.message });
   res.json({ success: true });
 });
@@ -74,7 +67,6 @@ app.get('/bookings', async (req, res) => {
     .from('bookings')
     .select('*')
     .order('created_at', { ascending: false });
-
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
@@ -82,7 +74,6 @@ app.get('/bookings', async (req, res) => {
 app.post('/bookings', async (req, res) => {
   const { trip_id, name, email, phone, count, notes, payment_method } = req.body;
 
-  // 1. Get the trip
   const { data: trip, error: tripErr } = await supabase
     .from('trips')
     .select('*')
@@ -94,7 +85,6 @@ app.post('/bookings', async (req, res) => {
   const avail = trip.spots - (trip.booked || 0);
   if (count > avail) return res.status(400).json({ error: `Only ${avail} spot(s) left` });
 
-  // 2. Save booking as pending
   const { data: booking, error: bookErr } = await supabase
     .from('bookings')
     .insert([{
@@ -110,64 +100,60 @@ app.post('/bookings', async (req, res) => {
 
   if (bookErr) return res.status(500).json({ error: bookErr.message });
 
-  // 3. Initiate payment
- try {
-  const collection = intasend.collection();
-  
-  let paymentResponse;
+  try {
+    const collection = intasend.collection();
+    let paymentResponse;
 
-  if (payment_method === 'mpesa') {
-    paymentResponse = await collection.mpesaStkPush({
-      first_name:   name.split(' ')[0],
-      last_name:    name.split(' ')[1] || '',
-      email:        email,
-      host:         'https://wander-backend-p970.onrender.com',
-      amount:       trip.price * count,
-      phone_number: phone,
-      api_ref:      booking.id
+    if (payment_method === 'mpesa') {
+      paymentResponse = await collection.mpesaStkPush({
+        first_name:   name.split(' ')[0],
+        last_name:    name.split(' ')[1] || '',
+        email:        email,
+        host:         'https://wander-backend-p970.onrender.com',
+        amount:       trip.price * count,
+        phone_number: phone,
+        api_ref:      booking.id
+      });
+    } else {
+      paymentResponse = await collection.checkoutLinkCreate({
+        first_name:   name.split(' ')[0],
+        last_name:    name.split(' ')[1] || '',
+        email:        email,
+        host:         'https://wander-backend-p970.onrender.com',
+        amount:       trip.price * count,
+        currency:     'KES',
+        api_ref:      booking.id
+      });
+    }
+
+    const invoiceId = paymentResponse?.invoice?.invoice_id || paymentResponse?.id;
+    const paymentUrl = paymentResponse?.url || paymentResponse?.checkout_url || null;
+
+    await supabase
+      .from('bookings')
+      .update({ payment_ref: invoiceId })
+      .eq('id', booking.id);
+
+    res.json({
+      booking_id:  booking.id,
+      payment_url: paymentUrl,
+      invoice_id:  invoiceId
     });
-  } else {
-    paymentResponse = await collection.checkoutLinkCreate({
-      first_name:   name.split(' ')[0],
-      last_name:    name.split(' ')[1] || '',
-      email:        email,
-      host:         'https://wander-backend-p970.onrender.com',
-      amount:       trip.price * count,
-      currency:     'KES',
-      api_ref:      booking.id
-    });
+
+  } catch (err) {
+    console.error('Instasend error:', err);
+    res.status(500).json({ error: 'Payment initiation failed', detail: err.message });
   }
+}); // ← this was missing
 
-  const invoiceId = paymentResponse?.invoice?.invoice_id || paymentResponse?.id;
-  const paymentUrl = paymentResponse?.url || paymentResponse?.checkout_url || null;
-
-  await supabase
-    .from('bookings')
-    .update({ payment_ref: invoiceId })
-    .eq('id', booking.id);
-
-  res.json({
-    booking_id:  booking.id,
-    payment_url: paymentUrl,
-    invoice_id:  invoiceId
-  });
-
-} catch (err) {
-  console.error('Instasend error:', err);
-  res.status(500).json({ error: 'Payment initiation failed', detail: err.message });
-}
-// ─── INSTASEND WEBHOOK ───────────────────────────────
-// Add this URL in Instasend dashboard → Settings → Webhooks:
-// https://your-railway-url/webhook/instasend
+// ─── WEBHOOK ─────────────────────────────────────────
 
 app.post('/webhook/instasend', async (req, res) => {
   console.log('Webhook received:', req.body);
-
   const { invoice_id, state } = req.body;
 
   if (state !== 'COMPLETE') return res.sendStatus(200);
 
-  // Find booking by payment ref
   const { data: booking, error } = await supabase
     .from('bookings')
     .select('*')
@@ -179,13 +165,11 @@ app.post('/webhook/instasend', async (req, res) => {
     return res.sendStatus(200);
   }
 
-  // Mark confirmed
   await supabase
     .from('bookings')
     .update({ status: 'confirmed' })
     .eq('id', booking.id);
 
-  // Decrement spots
   await supabase.rpc('decrement_spots', {
     trip_id: booking.trip_id,
     amount:  booking.count

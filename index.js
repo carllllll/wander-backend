@@ -16,7 +16,6 @@ console.log('KEY:', supabaseKey ? 'found' : 'MISSING');
 
 const supabase = createClient(supabaseUrl, supabaseKey);
 
-const IntaSend = require('intasend-node');
 const intasend = new IntaSend(
   process.env.INSTASEND_PUBLISHABLE_KEY, // publishable key FIRST
   process.env.INSTASEND_API_TOKEN,       // secret key SECOND

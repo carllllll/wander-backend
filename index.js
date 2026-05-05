@@ -114,20 +114,20 @@ app.post('/bookings', async (req, res) => {
         phone_number: phone,
         api_ref:      booking.id
       });
-    } else {
-      paymentResponse = await collection.checkoutLinkCreate({
-        first_name:   name.split(' ')[0],
-        last_name:    name.split(' ')[1] || '',
-        email:        email,
-        host:         'https://wander-backend-p970.onrender.com',
-        amount:       trip.price * count,
-        currency:     'KES',
-        api_ref:      booking.id
-      });
-    }
+ } else {
+  paymentResponse = await collection.create({
+    first_name:   name.split(' ')[0],
+    last_name:    name.split(' ')[1] || '',
+    email:        email,
+    host:         'https://wander-backend-p970.onrender.com',
+    amount:       trip.price * count,
+    currency:     'KES',
+    api_ref:      booking.id
+  });
+}
 
-    const invoiceId = paymentResponse?.invoice?.invoice_id || paymentResponse?.id;
-    const paymentUrl = paymentResponse?.url || paymentResponse?.checkout_url || null;
+const invoiceId = paymentResponse?.invoice?.invoice_id || paymentResponse?.id;
+const paymentUrl = paymentResponse?.url || paymentResponse?.checkout_url || paymentResponse?.payment_link || null;
 
     await supabase
       .from('bookings')

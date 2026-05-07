@@ -17,7 +17,7 @@ const supabase = createClient(
 const intasend = new IntaSend(
   process.env.INSTASEND_PUBLISHABLE_KEY,
   process.env.INSTASEND_API_TOKEN,
-  true // true = sandbox, false = live
+  false // true = sandbox, false = live
 );
 
 // ─── TRIPS ───────────────────────────────────────────

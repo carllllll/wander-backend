@@ -166,7 +166,13 @@ app.post('/bookings', async (req, res) => {
 
 app.post('/webhook/instasend', async (req, res) => {
   console.log('Webhook received:', req.body);
-  const { invoice_id, state } = req.body;
+
+  // Verify challenge
+  const { invoice_id, state, challenge } = req.body;
+  if (challenge !== process.env.INSTASEND_CHALLENGE) {
+    console.log('Invalid challenge:', challenge);
+    return res.sendStatus(401);
+  }
 
   if (state !== 'COMPLETE') return res.sendStatus(200);
 
@@ -194,7 +200,6 @@ app.post('/webhook/instasend', async (req, res) => {
   console.log(`Booking ${booking.id} confirmed, ${booking.count} spot(s) decremented`);
   res.sendStatus(200);
 });
-
 // ─── START ───────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`Wander API running on port ${PORT}`));
